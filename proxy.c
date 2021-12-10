@@ -15,23 +15,24 @@
 #include <errno.h>
 #include <signal.h>
 
-#define MAXEVENTS 100
-#define MAXLINE 25
-#define LISTENQ 50
-#define HTTP_REQUEST_MAX_SIZE 4096
-
-#define HOSTNAME_MAX_SIZE 512
-#define PORT_MAX_SIZE 6
-#define URI_MAX_SIZE 4096
-#define METHOD_SIZE 32
-#define BUF_SIZE 500
-
-#define MAX_OBJECT_SIZE 102400
 
 #define READ_REQUEST 1
 #define SEND_REQUEST 2
 #define READ_RESPONSE 3
 #define SEND_RESPONSE 4
+#define MAXEVENTS 200
+#define MAXLINE 25
+#define LISTENQ 50
+#define HTTP_REQUEST_MAX_SIZE 4096
+#define MAX_OBJECT_SIZE 102400
+#define HOSTNAME_MAX_SIZE 512
+#define PORT_MAX_SIZE 6
+#define URI_MAX_SIZE 4096
+#define METHOD_SIZE 32
+#define BUF_SIZE 1024
+
+
+
 
 
 /* You won't lose style points for including this long line in your code */
@@ -212,6 +213,7 @@ void get_remaining_headers(char *headers, const char *request) {
 
     char *token;
     char requestcopy[MAX_OBJECT_SIZE];
+    int headerslen = 0;
     memset(requestcopy, 0, MAX_OBJECT_SIZE);
     strcpy(requestcopy, request);
 
@@ -220,23 +222,20 @@ void get_remaining_headers(char *headers, const char *request) {
 
     token = strtok(NULL, "\r\n");
 
-    int headerslen = 0;
 
     /* walk through other tokens */
     while(token != NULL) {
         char headername[100];
         char *headernameend = strchr(token, ':');
-        char currheader[100];
+        char my_header[100];
 
-        strcpy(currheader, token);
+        strcpy(my_header, token);
         *headernameend = '\0';
         strcpy(headername, token);
-        if (strcmp(headername, "Host") == 0 || strcmp(headername, "User-Agent") == 0 ||
-            strcmp(headername, "Proxy-Connection") == 0 || strcmp(headername, "Connection") == 0) {
-        }
-        else {
-            strcpy(headers+headerslen, currheader);
-            headerslen += strlen(currheader);
+        if !(strcmp(headername, "Host") == 0 || strcmp(headername, "User-Agent") == 0 ||
+            strcmp(headername, "Proxy-Connection") == 0 || strcmp(headername, "Connection") == 0){
+            strcpy(headers+headerslen, my_header);
+            headerslen += strlen(my_header);
             strcpy(headers+headerslen, "\r\n");
             headerslen += 2;
         }
