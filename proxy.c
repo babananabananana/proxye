@@ -30,7 +30,9 @@
 #define URI_MAX_SIZE 4096
 #define METHOD_SIZE 32
 #define BUF_SIZE 1024
+#define HEADER_SIZE 100
 
+#define END_MESSAGE "\r\n\r\n"
 
 
 
@@ -53,7 +55,7 @@ the total number of bytes read from the server
 the total number of bytes written to the client
 */
 
-typedef struct client_request {
+typedef struct request_info{
     int clientfd;
     int sfd;
     int req_state;
@@ -63,7 +65,7 @@ typedef struct client_request {
     int bytes_written_server;
     int bytes_read_server;
     int bytes_written_client;
-} client_request;
+} request_info;
 
 void sig_int_handler(int signum);
 int open_listen_fd(char *port);
@@ -71,14 +73,14 @@ int is_complete_request(const char *request);
 void get_remaining_headers(char *headers, const char *request);
 int parse_request(const char *request, char *method,
                   char *hostname, char *port, char *uri, char *headers);
-void modsocket(int epollfd, int cfd, client_request *ri);
+void modsocket(int epollfd, int cfd, request_info *ri);
 void handle_new_connection(int epollfd, struct epoll_event *ev);
 void handle_client_request(int epollfd, struct epoll_event *ev);
-void handle_complete_request(int epollfd, struct client_request *request);
-void read_from_client(int epollfd, struct epoll_event *ev, struct client_request *request);
-void read_from_server(int epollfd, struct epoll_event *ev, struct client_request *request);
-void write_to_server(int epollfd, struct epoll_event *ev, struct client_request *request);
-void write_to_client(int epollfd, struct epoll_event *ev, struct client_request *request);
+void handle_complete_request(int epollfd, struct request_info*request);
+void read_from_client(int epollfd, struct epoll_event *ev, struct request_info *request);
+void read_from_server(int epollfd, struct epoll_event *ev, struct request_info *request);
+void write_to_server(int epollfd, struct epoll_event *ev, struct request_info *request);
+void write_to_client(int epollfd, struct epoll_event *ev, struct request_info *request);
 
 
 // Imagine network events as a binary signal pulse.
@@ -95,6 +97,11 @@ void write_to_client(int epollfd, struct epoll_event *ev, struct client_request 
 //Typically one wants to use edge trigger mode and make sure all data available is read and buffered.
 
 
+//void echo_data(int fd, char *buff, int size)
+//{
+//    printf("Sending: %s\n", buff);
+//    write(fd, buff, size+1);
+//}
 
 int main(int argc, char **argv)
 {
@@ -107,7 +114,7 @@ int main(int argc, char **argv)
     sigact.sa_handler = sig_int_handler;
     sigaction(SIGINT, &sigact, NULL);
 
-    struct epoll_event event, events[100000];
+    struct epoll_event event, events[MAX_OBJECT_SIZE];
 
     int epollfd = epoll_create(LISTENQ);
 
@@ -213,7 +220,7 @@ void get_remaining_headers(char *headers, const char *request) {
 
     char *token;
     char requestcopy[MAX_OBJECT_SIZE];
-    int headerslen = 0;
+    int header_size= 0;
     memset(requestcopy, 0, MAX_OBJECT_SIZE);
     strcpy(requestcopy, request);
 
@@ -225,24 +232,24 @@ void get_remaining_headers(char *headers, const char *request) {
 
     /* walk through other tokens */
     while(token != NULL) {
-        char headername[100];
-        char *headernameend = strchr(token, ':');
-        char my_header[100];
+        char headername[HEADER_SIZE];
+        char *header_end = strchr(token, ':');
+        char my_header[HEADER_SIZE];
 
         strcpy(my_header, token);
-        *headernameend = '\0';
+        *header_end = '\0';
         strcpy(headername, token);
         if (!(strcmp(headername, "Host") == 0 || strcmp(headername, "User-Agent") == 0 ||
             strcmp(headername, "Proxy-Connection") == 0 || strcmp(headername, "Connection") == 0)){
-            strcpy(headers+headerslen, my_header);
-            headerslen += strlen(my_header);
-            strcpy(headers+headerslen, "\r\n");
-            headerslen += 2;
+            strcpy(headers+header_size, my_header);
+            header_size += strlen(my_header);
+            strcpy(headers+header_size, "\r\n");
+            header_size += 2;
         }
         token = strtok(NULL, "\r\n");
     }
 
-    strcpy(headers+headerslen, "\r\n");
+    strcpy(headers+header_size, "\r\n");
 }
 
 int parse_request(const char *request, char *method,
@@ -305,7 +312,7 @@ void handle_new_connection(int epollfd, struct epoll_event *ev) {
         int flags = fcntl(cfd, F_GETFL, 0);
         fcntl(cfd, F_SETFL, flags | O_NONBLOCK);
 
-        client_request *ri = (client_request *) calloc(1, sizeof(client_request));
+        request_info *ri = (request_info *) calloc(1, sizeof(request_info));
 
         ri->clientfd = cfd;
         ri->bytes_read_client = 0;
@@ -316,7 +323,7 @@ void handle_new_connection(int epollfd, struct epoll_event *ev) {
 }
 
 
-void modsocket(int epollfd, int cfd, client_request* ri) {
+void modsocket(int epollfd, int cfd, request_info* ri) {
     int s;
 
     struct epoll_event event;
@@ -344,9 +351,11 @@ void modsocket(int epollfd, int cfd, client_request* ri) {
     }
 }
 
+
+//TODO:CLEAN SPACE FROM MAP??
 void handle_client_request(int epollfd, struct epoll_event *ev) {
 
-    client_request *request = (client_request *)ev->data.ptr;
+    request_info *request = (request_info *)ev->data.ptr;
 
     if (request->req_state == READ_REQUEST) {
         read_from_client(epollfd, ev, request);
@@ -371,7 +380,7 @@ void handle_client_request(int epollfd, struct epoll_event *ev) {
 }
 
 
-void read_from_client(int epollfd, struct epoll_event *ev, struct client_request *request) {
+void read_from_client(int epollfd, struct epoll_event *ev, struct request_info *request) {
 
     int n;
 
@@ -416,7 +425,7 @@ void read_from_client(int epollfd, struct epoll_event *ev, struct client_request
 
 }
 
-void handle_complete_request(int epollfd, struct client_request *request) {
+void handle_complete_request(int epollfd, struct request_info *request) {
     char *method;
     char *hostname;
     char *port;
@@ -424,12 +433,6 @@ void handle_complete_request(int epollfd, struct client_request *request) {
     char *headers;
 
     char buf[MAX_OBJECT_SIZE];
-
-    /* We have data on the fd waiting to be read. Read and
-    display it. If edge triggered, we must read whatever data is available
-    completely, as we are running in edge-triggered mode
-    and won't get a notification again for the same data.
-    */
 
     method = (char *) calloc(METHOD_SIZE + 1, sizeof(char));
     hostname = (char *) calloc(HOSTNAME_MAX_SIZE + 1, sizeof(char));
@@ -489,7 +492,7 @@ void handle_complete_request(int epollfd, struct client_request *request) {
 
 }
 
-void write_to_server(int epollfd, struct epoll_event *ev, struct client_request *request) {
+void write_to_server(int epollfd, struct epoll_event *ev, struct request_info *request) {
 
     int n = 0;
 
@@ -521,7 +524,7 @@ void write_to_server(int epollfd, struct epoll_event *ev, struct client_request 
 }
 
 
-void read_from_server(int epollfd, struct epoll_event *ev, struct client_request *request) {
+void read_from_server(int epollfd, struct epoll_event *ev, struct request_info *request) {
     int n;
     int done = 0;
 
@@ -549,7 +552,7 @@ void read_from_server(int epollfd, struct epoll_event *ev, struct client_request
     }
 }
 
-void write_to_client(int epollfd, struct epoll_event *ev, struct client_request *request) {
+void write_to_client(int epollfd, struct epoll_event *ev, struct request_info *request) {
 
     int n = 0;
 
@@ -588,7 +591,7 @@ int is_complete_request(const char *request) {
 
     //printf("buff[%d]=[%c] bytesread = %d\n", n-1, buff[n-1], bytesread);
     //Client is sending hello\n\0 so need to back off 2
-    const char *ret = strstr(request, "\r\n\r\n");
+    const char *ret = strstr(request, END_MESSAGE);
     if (ret != NULL) {
         return 1;
     }
