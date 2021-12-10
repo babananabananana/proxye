@@ -64,7 +64,7 @@ typedef struct client_request {
     int bytes_written_client;
 } client_request;
 
-
+void sig_int_handler(int signum)
 int open_listen_fd(char *port);
 int is_complete_request(const char *request);
 void get_remaining_headers(char *headers, const char *request);
