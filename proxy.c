@@ -55,8 +55,8 @@ the total number of bytes written to the client
 typedef struct client_request {
     int clientfd;
     int sfd;
-    int request_state;
-    char read_buff[MAX_OBJECT_SIZE];
+    int req_state;
+    char buff[MAX_OBJECT_SIZE];
     int bytes_read_client;
     int bytes_to_write_server;
     int bytes_written_server;
@@ -310,7 +310,7 @@ void handle_new_connection(int epollfd, struct epoll_event *ev) {
 
         ri->clientfd = cfd;
         ri->bytes_read_client = 0;
-        ri->request_state = READ_REQUEST;
+        ri->req_state = READ_REQUEST;
 
         modsocket(epollfd, cfd, ri);
     }
@@ -323,7 +323,7 @@ void modsocket(int epollfd, int cfd, client_request* ri) {
     struct epoll_event event;
     event.data.fd = cfd;
 
-    if (ri->request_state == READ_REQUEST || ri->request_state == READ_RESPONSE) {
+    if (ri->req_state == READ_REQUEST || ri->req_state == READ_RESPONSE) {
         event.events = EPOLLIN | EPOLLET;
     }
     else {
@@ -332,7 +332,7 @@ void modsocket(int epollfd, int cfd, client_request* ri) {
 
     event.data.ptr = ri;
 
-    if (ri->request_state == READ_REQUEST || ri->request_state == SEND_REQUEST) {
+    if (ri->req_state == READ_REQUEST || ri->req_state == SEND_REQUEST) {
         s = epoll_ctl(epollfd, EPOLL_CTL_ADD, cfd, &event);
     }
     else {
@@ -349,24 +349,24 @@ void handle_client_request(int epollfd, struct epoll_event *ev) {
 
     client_request *request = (client_request *)ev->data.ptr;
 
-    if (request->request_state == READ_REQUEST) {
+    if (request->req_state == READ_REQUEST) {
         read_from_client(epollfd, ev, request);
     }
 
-    if (request->request_state == SEND_REQUEST) {
+    if (request->req_state == SEND_REQUEST) {
         write_to_server(epollfd, ev, request);
     }
 
 
-    if (request->request_state == READ_RESPONSE) {
+    if (request->req_state == READ_RESPONSE) {
         read_from_server(epollfd, ev, request);
     }
 
-    if (request->request_state == SEND_RESPONSE) {
+    if (request->req_state == SEND_RESPONSE) {
         write_to_client(epollfd, ev, request);
     }
 
-    if (request->request_state == 5) {
+    if (request->req_state == 5) {
         free(ev->data.ptr);
     }
 }
@@ -379,7 +379,7 @@ void read_from_client(int epollfd, struct epoll_event *ev, struct client_request
     int done = 0;
 
     for (int i = 0; !done; i++) {
-        n = read(request->clientfd, request->read_buff+request->bytes_read_client, MAXLINE);
+        n = read(request->clientfd, request->buff+request->bytes_read_client, MAXLINE);
 
         if (n != -1) {
             request->bytes_read_client += n;
@@ -402,10 +402,10 @@ void read_from_client(int epollfd, struct epoll_event *ev, struct client_request
         }
         else {
 
-            if (is_complete_request(request->read_buff)) {
+            if (is_complete_request(request->buff)) {
                 done = 1;
 
-                request->request_state = SEND_REQUEST;
+                request->req_state = SEND_REQUEST;
 
                 handle_complete_request(epollfd, request);
 
@@ -439,7 +439,7 @@ void handle_complete_request(int epollfd, struct client_request *request) {
     headers = (char *) calloc(BUF_SIZE + 1, sizeof(char));
 
 
-    parse_request(request->read_buff, method, hostname, port, uri, headers);
+    parse_request(request->buff, method, hostname, port, uri, headers);
 
     int bufferlocation = 0;
 
@@ -455,8 +455,8 @@ void handle_complete_request(int epollfd, struct client_request *request) {
 
 
     ////RESET
-    memset(request->read_buff, 0, MAX_OBJECT_SIZE);
-    strcpy(request->read_buff, buf);
+    memset(request->buff, 0, MAX_OBJECT_SIZE);
+    strcpy(request->buff, buf);
 
 
     ////NEW SOCKET
@@ -495,7 +495,7 @@ void write_to_server(int epollfd, struct epoll_event *ev, struct client_request 
     int n = 0;
 
     while (request->bytes_written_server < request->bytes_to_write_server) {
-        n = send(request->sfd, request->read_buff+request->bytes_written_server, strlen(request->read_buff), 0);
+        n = send(request->sfd, request->buff+request->bytes_written_server, strlen(request->buff), 0);
 
         if (n != -1){
             request->bytes_written_server += n;
@@ -514,8 +514,8 @@ void write_to_server(int epollfd, struct epoll_event *ev, struct client_request 
     }
 
     if (request->bytes_written_server == request->bytes_to_write_server) {
-        request->request_state = READ_RESPONSE;
-        memset(request->read_buff, 0, MAX_OBJECT_SIZE);
+        request->req_state = READ_RESPONSE;
+        memset(request->buff, 0, MAX_OBJECT_SIZE);
         modsocket(epollfd, request->sfd, request);
     }
 
@@ -527,7 +527,7 @@ void read_from_server(int epollfd, struct epoll_event *ev, struct client_request
     int done = 0;
 
     while(!done) {
-        n = read(request->sfd, request->read_buff+request->bytes_read_server, MAXLINE);
+        n = read(request->sfd, request->buff+request->bytes_read_server, MAXLINE);
 
         if (n > 0) {
             request->bytes_read_server += n;
@@ -539,7 +539,7 @@ void read_from_server(int epollfd, struct epoll_event *ev, struct client_request
         }
         if (n == 0) {
             done = 1;
-            request->request_state = SEND_RESPONSE;
+            request->req_state = SEND_RESPONSE;
             modsocket(epollfd, request->clientfd, request);
             close(request->sfd);
         }
@@ -555,7 +555,7 @@ void write_to_client(int epollfd, struct epoll_event *ev, struct client_request 
     int n = 0;
 
     while (request->bytes_written_client < request->bytes_read_server) {
-        n = send(request->clientfd, request->read_buff+request->bytes_written_client, request->bytes_read_server, 0);
+        n = send(request->clientfd, request->buff+request->bytes_written_client, request->bytes_read_server, 0);
 
         if (n != -1) {
             request->bytes_written_client += n;
@@ -575,7 +575,7 @@ void write_to_client(int epollfd, struct epoll_event *ev, struct client_request 
     }
 
     if (request->bytes_written_client == request->bytes_read_server) {
-        request->request_state = 5;
+        request->req_state = 5;
         close(request->clientfd);
     }
 }
