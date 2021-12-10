@@ -54,7 +54,7 @@ the total number of bytes written to the client
 
 typedef struct client_request {
     int clientfd;
-    int serverfd;
+    int sfd;
     int request_state;
     char read_buff[MAX_OBJECT_SIZE];
     int bytes_read_client;
@@ -70,14 +70,15 @@ int is_complete_request(const char *request);
 void get_remaining_headers(char *headers, const char *request);
 int parse_request(const char *request, char *method,
                   char *hostname, char *port, char *uri, char *headers);
+void modsocket(int epollfd, int cfd, client_request *ri);
 void handle_new_connection(int epollfd, struct epoll_event *ev);
 void handle_client_request(int epollfd, struct epoll_event *ev);
-void read_from_client(int epollfd, struct epoll_event *ev, struct client_request *request);
-void write_to_server(int epollfd, struct epoll_event *ev, struct client_request *request);
-void read_from_server(int epollfd, struct epoll_event *ev, struct client_request *request);
-void write_to_client(int epollfd, struct epoll_event *ev, struct client_request *request);
 void handle_complete_request(int epollfd, struct client_request *request);
-void modsocket(int epollfd, int cfd, client_request *ri);
+void read_from_client(int epollfd, struct epoll_event *ev, struct client_request *request);
+void read_from_server(int epollfd, struct epoll_event *ev, struct client_request *request);
+void write_to_server(int epollfd, struct epoll_event *ev, struct client_request *request);
+void write_to_client(int epollfd, struct epoll_event *ev, struct client_request *request);
+
 
 // Imagine network events as a binary signal pulse.
 // Edge triggered epoll only returns when an edge occurs, ie. transitioning from 0 to 1 or 1 to 0.
@@ -408,7 +409,7 @@ void read_from_client(int epollfd, struct epoll_event *ev, struct client_request
 
                 handle_complete_request(epollfd, request);
 
-                modsocket(epollfd, request->serverfd, request);
+                modsocket(epollfd, request->sfd, request);
             }
         }
     }
@@ -460,9 +461,9 @@ void handle_complete_request(int epollfd, struct client_request *request) {
 
     ////NEW SOCKET
     struct sockaddr_in webserver;
-    int webserverfd = socket(AF_INET, SOCK_STREAM, 0);
+    int websfd = socket(AF_INET, SOCK_STREAM, 0);
 
-    if (webserverfd == -1) {
+    if (websfd == -1) {
         printf("could not create socket\n");
     }
 
@@ -471,15 +472,15 @@ void handle_complete_request(int epollfd, struct client_request *request) {
     webserver.sin_addr.s_addr = INADDR_ANY;
 
 
-    if (connect(webserverfd, (struct sockaddr *) &webserver, sizeof(webserver)) < 0) {
+    if (connect(websfd, (struct sockaddr *) &webserver, sizeof(webserver)) < 0) {
         printf("Connection failed\n");
     } else {
         printf("Opened connection to webserver on port [%s] and saved to request\n", port);
-        request->serverfd = webserverfd;
+        request->sfd = websfd;
     }
 
-    int flags = fcntl(webserverfd, F_GETFL, 0);
-    fcntl(webserverfd, F_SETFL, flags | O_NONBLOCK);
+    int flags = fcntl(websfd, F_GETFL, 0);
+    fcntl(websfd, F_SETFL, flags | O_NONBLOCK);
 
     free(method);
     free(port);
@@ -494,7 +495,7 @@ void write_to_server(int epollfd, struct epoll_event *ev, struct client_request 
     int n = 0;
 
     while (request->bytes_written_server < request->bytes_to_write_server) {
-        n = send(request->serverfd, request->read_buff+request->bytes_written_server, strlen(request->read_buff), 0);
+        n = send(request->sfd, request->read_buff+request->bytes_written_server, strlen(request->read_buff), 0);
 
         if (n != -1){
             request->bytes_written_server += n;
@@ -515,7 +516,7 @@ void write_to_server(int epollfd, struct epoll_event *ev, struct client_request 
     if (request->bytes_written_server == request->bytes_to_write_server) {
         request->request_state = READ_RESPONSE;
         memset(request->read_buff, 0, MAX_OBJECT_SIZE);
-        modsocket(epollfd, request->serverfd, request);
+        modsocket(epollfd, request->sfd, request);
     }
 
 }
@@ -526,7 +527,7 @@ void read_from_server(int epollfd, struct epoll_event *ev, struct client_request
     int done = 0;
 
     while(!done) {
-        n = read(request->serverfd, request->read_buff+request->bytes_read_server, MAXLINE);
+        n = read(request->sfd, request->read_buff+request->bytes_read_server, MAXLINE);
 
         if (n > 0) {
             request->bytes_read_server += n;
@@ -540,7 +541,7 @@ void read_from_server(int epollfd, struct epoll_event *ev, struct client_request
             done = 1;
             request->request_state = SEND_RESPONSE;
             modsocket(epollfd, request->clientfd, request);
-            close(request->serverfd);
+            close(request->sfd);
         }
 
         if (n == -1) {
