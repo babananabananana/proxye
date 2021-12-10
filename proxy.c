@@ -232,8 +232,8 @@ void get_remaining_headers(char *headers, const char *request) {
         strcpy(my_header, token);
         *headernameend = '\0';
         strcpy(headername, token);
-        if !(strcmp(headername, "Host") == 0 || strcmp(headername, "User-Agent") == 0 ||
-            strcmp(headername, "Proxy-Connection") == 0 || strcmp(headername, "Connection") == 0){
+        if (!(strcmp(headername, "Host") == 0 || strcmp(headername, "User-Agent") == 0 ||
+            strcmp(headername, "Proxy-Connection") == 0 || strcmp(headername, "Connection") == 0)){
             strcpy(headers+headerslen, my_header);
             headerslen += strlen(my_header);
             strcpy(headers+headerslen, "\r\n");
